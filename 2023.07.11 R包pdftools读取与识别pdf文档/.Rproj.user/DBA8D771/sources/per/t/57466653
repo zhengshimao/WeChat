@@ -1,0 +1,28 @@
+{
+    "id": "57466653",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1689342734854.0,
+    "source_on_save": false,
+    "relative_order": 3,
+    "properties": {
+        "id": "e615bf5586934a55995f0121ce2b3d64",
+        "name": "toc",
+        "title": "toc",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 2064780871656,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1689342734854,
+    "read_only": false,
+    "read_only_alternatives": []
+}
