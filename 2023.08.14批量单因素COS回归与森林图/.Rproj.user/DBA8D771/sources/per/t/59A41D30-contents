@@ -1,0 +1,297 @@
+
+## 森林图绘制
+
+# .libPaths("/data/tianweiwei/rstudio-4.2.1/lib/")
+library(forestplot)
+
+# setwd("/data/tianweiwei/rstudio-4.2.1/10.杜顺达项目/03.20230807_CHOL/")
+
+############################################################################
+suppressPackageStartupMessages(library(magrittr))
+library(survival)
+library(forestplot)
+library(plyr)
+
+# ----------------------------------------------------------
+m_read.table <- function(file, header = TRUE, sep = "\t", quote = "",
+                         stringsAsFactors = FALSE, as.is = !stringsAsFactors,
+                         na.strings = c("","NA"), nrows = -1,
+                         blank.lines.skip = TRUE, skip = 0, 
+                         check.names = TRUE, fill = !blank.lines.skip)
+{
+  return(read.table(file, header = header, sep = sep, quote = quote,
+                    stringsAsFactors = stringsAsFactors, as.is = as.is,
+                    na.strings = na.strings, nrows = nrows,
+                    blank.lines.skip = blank.lines.skip, skip = skip, 
+                    check.names = check.names, fill = fill))
+}
+# ----------------------------------------------------------
+## clinical information
+clin_infor <- m_read.table(file = "./00.data/clinical_infor.txt")
+colnames(clin_infor) %<>% gsub(pattern = "[\\.-]",replacement = "_")
+# ----------------------------------------------------------
+
+####################### 批量单因素COX回归 ###################################
+
+########## 方法一
+### OS 批量单因素COX回归
+
+os_covariates <- c("age","tumor_differentiation","stage","CEA","GGT","ALP")
+
+pfs_covariates <- c("Lymph_node_metastases","stage","CA19_9","AFP","AST","hypertension")
+
+## univ_cos:使用survival::coxph() fit
+univ_cos <- function(covariates,
+                     time,
+                     status,
+                     data = clin_infor
+                     ){
+  message("fit: survival::coxph()")
+  
+  if(all(covariates %in% colnames(data))){ # check covariates
+    univ_formulas <- sapply(covariates, function(x) as.formula(paste("Surv(",time,",",status,") ~ ", x)))
+    message("OK: clinical information: ",paste(covariates, collapse = ", "))
+  }else{
+    stop("Not all covariates in the clinical information!")
+  }
+  
+  for (x in covariates) {
+    num_values <- data[,x][!is.na(data[,x])] %>% unique() %>% length()
+    if(num_values > 1){
+      message("OK: number of values: ",x," ",num_values)
+    }else{
+      stop("\"",x, "\" variable has only one value!")
+    }
+  }
+  
+  univ_models <- lapply( univ_formulas, function(x){coxph(x, data = data)})
+  
+  univ_results <- lapply(univ_models, function(x){
+    x <- summary(x) #  univ_os_models$stage
+    p_value <- signif(x$waldtest["pvalue"],digits=2)
+    wald_test <- signif(x$waldtest["test"], digits=2)
+    beta <- signif(x$coefficients[1],digits=2)
+    HR <- signif(x$coefficients[2],digits=2)
+    HR_confint_lower <- signif(x$conf.int[,"lower .95"],digits=2)
+    HR_confint_upper <- signif(x$conf.int[,"upper .95"],digits=2)
+    HR_95CI <- paste0(HR,"(",HR_confint_lower,"-",HR_confint_upper,")")
+    res <- data.frame("Beta"=beta,"HR_confint_lower_95" = HR_confint_lower,"HR_confint_upper_95" = HR_confint_upper, 
+                      "HR" = HR,"HR_95CI" = HR_95CI,"Wald_test"=wald_test,"P_value"=p_value) # HR (95% CI for HR)
+    return(res)
+    })
+  
+  univ_cox <- ldply(univ_results,data.frame)
+  colnames(univ_cox)[1] <- "Clinical_factors"
+  
+  return(univ_cox)
+}
+
+## run univ_cos
+### OS
+univ_cox_os <- univ_cos(covariates = os_covariates,
+                        time = "os_month",
+                        status = "os_status",
+                        data = clin_infor
+                        )
+### PFS
+univ_cox_fps <- univ_cos(covariates = pfs_covariates,
+                        time = "os_month",
+                        status = "os_status",
+                        data = clin_infor
+)
+
+save(univ_cox_os,file = "univ_cox_os.Rdata")
+
+### OS单因素森林图
+## ggplot2版本
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(stringr)
+library(aplot)
+tab <- univ_cox_os %>% select(Clinical_factors, HR_95CI,P_value)
+# https://rpkgs.datanovia.com/ggpubr/reference/ggtexttable.html#:~:text=rownames_style%20%28%29%2C%20colnames_style%20%28%29%2C%20tbody_style%20%28%29%3A%20helper%20functions,cell%20for%20changing%20the%20background%20%28fill%2C%20color%2C%20linewidth%29.
+p_tab <- ggtexttable(x = tab,
+                     width = 7,
+                     rows = NULL,#tab$Clinical_factors,
+                     cols = str_replace_all(colnames(tab), pattern = "_", replacement = " "),
+                     theme = ttheme(base_style = "blank",
+                           colnames.style = colnames_style(face = "bold", size = 12,fill = "white"),
+                           tbody.style = tbody_style(fill = c("white"))
+                           )
+            ) %>% 
+  tab_add_hline(tab = ., at.row = c(1,tab_nrow(.)),linewidth = 2)
+  
+tmp_univ_cox_os <- rbind(rep(NA,ncol(univ_cox_os)),univ_cox_os)
+tmp_univ_cox_os$Clinical_factors[1] <- "Clinical_factors"
+
+tmp_univ_cox_os$Clinical_factors <- factor(tmp_univ_cox_os$Clinical_factors, levels = rev(tmp_univ_cox_os$Clinical_factors))
+
+p_errorbar <- ggplot(data = tmp_univ_cox_os)+
+  geom_errorbarh(aes(xmin = HR_confint_lower_95,xmax =HR_confint_upper_95,
+                     y = Clinical_factors),
+                 linewidth = 0.5,
+                 height = 0.4,
+                 size = 1
+                 )+
+  geom_point(aes(x = HR, y = Clinical_factors),
+             shape = "diamond",
+             color = "blue",
+             size = 2
+             )+
+  theme_bw()+
+  theme(title = element_blank(),
+        #aspect.ratio = 2/3
+        )
+p_errorbar  
+
+p_tab + p_errorbar+plot_grid(align = "h")
+
+
+
+
+
+### ggforest版本
+
+## position and width of horizontal lines
+hrzl_lines_lwd = list("2" = gpar(lwd=2),
+                      "line_position" = gpar(lwd=2)
+)
+names(hrzl_lines_lwd)[2] <- as.character(nrow(univ_cox_os)+1)
+
+pdf("03.figure/forestplot_os1.pdf",width = 13,height = 6)
+
+grid.newpage()
+pushViewport(viewport(layout.pos.row = 1,
+                      layout.pos.col = 1))
+tabletext <- cbind(c("Clinical factors",univ_cox_os$"Clinical_factors"),
+                   c("Hazard ratio (95% CI)",univ_cox_os$"HR_95CI"),
+                   c("P Value",univ_cox_os$"P_value"))
+forestplot(labeltext=tabletext,
+           title = "Univariate",
+           graph.pos = 4,
+           mean = c(NA,univ_cox_os$HR),
+           lower = c(NA,univ_cox_os$HR_confint_lower_95),
+           upper = c(NA,univ_cox_os$HR_confint_upper_95),
+           hrzl_lines = hrzl_lines_lwd,
+           txt_gp = fpTxtGp(label = gpar(cex=1),
+                            ticks = gpar(cex=1),
+                            xlab = gpar(cex=1),
+                            title = gpar(cex=1.2)),
+           boxsize = 0.1,
+           col=fpColors(box="#1c61b6", lines="black", zero = "gray50"),
+           zero = 1,
+           ci.vertices=TRUE,
+           lwd.ci=1,
+           fn.ci_norm="fpDrawDiamondCI",
+           new_page = F)
+dev.off()
+
+########## 方法二 
+
+library(RColorBrewer)
+library(survival)
+library(survminer)
+library(dplyr)
+
+univ_cos2 <- function(covariates,
+                      time,
+                      status,
+                      data = clin_infor
+                      ){
+  message("fit: survminer::survdiff()")
+  
+  
+  if(all(covariates %in% colnames(data))){ # check covariates
+    message("OK: clinical information: ",paste(covariates, collapse = ", "))
+  }else{
+    stop("Not all covariates in the clinical information!")
+  }
+  
+  for (x in covariates) {
+    num_values <- data[,x][!is.na(data[,x])] %>% unique() %>% length()
+    if(num_values > 1){
+      message("OK: number of values: ",x," ",num_values)
+    }else{
+      stop("\"",x, "\" variable has only one value!")
+    }
+  }
+  
+  
+  univ_results <- lapply(os_covariates, function(x){
+    
+    .formula <- as.formula(paste("Surv(",time,",",status,") ~ ", x))
+    # cfit <- surv_fit(.formula, data = data)
+    cfit.survdiff <- survdiff(.formula, data = data)
+    ## HR值计算
+    p.val = signif(1 - pchisq(cfit.survdiff$chisq, length(cfit.survdiff$n) - 1),  digits = 2)
+    HR    = signif((cfit.survdiff$obs[2]/cfit.survdiff$exp[2])/(cfit.survdiff$obs[1]/cfit.survdiff$exp[1]),  digits = 2)
+    up95  = signif(exp(log(HR) + qnorm(0.975)*sqrt(1/cfit.survdiff$exp[2]+1/cfit.survdiff$exp[1])),  digits = 2)
+    low95 = signif(exp(log(HR) - qnorm(0.975)*sqrt(1/cfit.survdiff$exp[2]+1/cfit.survdiff$exp[1])), digits = 2)
+    HR_95CI = paste0(HR,"(",low95,"-",up95,")")
+    
+    res <- data.frame(Clinical_factors = x ,"HR_confint_lower_95" = low95,"HR_confint_upper_95" = up95,  "HR"=HR,"HR_95CI" = HR_95CI, "P_value"=p.val)
+    return(res)
+  })
+  
+  univ_cox <- ldply(univ_results,data.frame)
+  
+  return(univ_cox)
+}
+
+## run univ_cos2
+### OS
+univ_cos_os2 <- univ_cos2(covariates = os_covariates,
+                        time = "os_month",
+                        status = "os_status",
+                        data = clin_infor
+)
+### PFS
+univ_cos_fps2 <- univ_cos2(covariates = pfs_covariates,
+                         time = "os_month",
+                         status = "os_status",
+                         data = clin_infor
+)
+
+
+
+
+univ_cox_os <- univ_cox_os2 #%>% filter(Clinical_factors != "CA19_9")
+
+hrzl_lines_lwd = list("2" = gpar(lwd=2),
+                      "line_position" = gpar(lwd=2)
+)
+names(hrzl_lines_lwd)[2] <- as.character(nrow(univ_cox_os)+2)
+
+pdf("03.figure/forestplot_os2.pdf",width = 13,height = 6)
+
+grid.newpage()
+pushViewport(viewport(layout.pos.row = 1,
+                      layout.pos.col = 1))
+tabletext <- cbind(c("Clinical factors",univ_cox_os$"Clinical_factors"),
+                   c("Hazard ratio (95% CI)",univ_cox_os$"HR_95CI"),
+                   c("P Value",univ_cox_os$"P_value"))
+forestplot(labeltext=tabletext,
+           title = "Univariate",
+           graph.pos = 4,
+           mean = c(NA,univ_cox_os$HR),
+           lower = c(NA,univ_cox_os$HR_confint_lower_95),
+           upper = c(NA,univ_cox_os$HR_confint_upper_95),
+           hrzl_lines = hrzl_lines_lwd,
+           txt_gp = fpTxtGp(label = gpar(cex=1),
+                            ticks = gpar(cex=1),
+                            xlab = gpar(cex=1),
+                            title = gpar(cex=1.2)),
+           boxsize = 0.1,
+           col=fpColors(box="#1c61b6", lines="black", zero = "gray50"),
+           zero = 1,
+           ci.vertices=TRUE,
+           lwd.ci=1,
+           fn.ci_norm="fpDrawDiamondCI",
+           new_page = F)
+dev.off()
+
+
+######################## 结束
+
+

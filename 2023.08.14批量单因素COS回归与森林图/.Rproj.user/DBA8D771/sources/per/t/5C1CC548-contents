@@ -1,0 +1,129 @@
+rm(list = ls())
+
+load("./univ_cox_os.Rdata")
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggtext)
+library(stringr)
+
+df <- univ_cox_os
+tab_header_bold = TRUE #是否给表格header行加粗
+line_width <- 0.5 
+error_bar_height <- 0.35
+
+tab_header = list(Clinical_factors = "Clinical factors", 
+                  HR_95CI = "Hazard ratio (95% CI)", 
+                  P_value = "P value")
+tmp_df <- df %>% select(Clinical_factors, HR_95CI, P_value) %>%  
+  #rbind(colnames(.),.) %>%  # df[1:nrow(df),]
+  rbind(tab_header,.) %>%
+  cbind("clinical" = .[,"Clinical_factors"],.)
+tmp_df$clinical <- factor(tmp_df$clinical, levels = rev(tmp_df$clinical))
+
+tmp_df <- tmp_df %>% pivot_longer(cols = 2:ncol(.), names_to = "x", values_to = "label")
+
+# header <- c(tmp_df$x %>% unique())
+
+tmp_df$label_bold <- sapply(tmp_df$label, function(x){
+  if(x %in% unlist(tab_header)){
+    if(tab_header_bold){ # 是否给表格header行加粗
+      paste0("<b>",x,"</b>") 
+    }else{
+      x
+    }
+    
+  }else{
+    x
+  }
+}, simplify = T) # 部分label加粗，即表格header加粗。使用geom_richtext实现加粗。
+
+# names(tmp_df$label_bold) <- NULL
+
+p_tab <- ggplot(data = tmp_df,aes(x = x, y = clinical))+
+  #geom_tile(color = "white",fill = "white")+ #表格边框与填充
+  geom_richtext(aes(label = label_bold),label.color = NA)+ # 启用ggtext并去掉边框
+  #geom_text(aes(label = if_else(label %in% header, expression(bold(label)),label) ))+
+  #geom_text(aes(label = label_bold))+
+  # coord_cartesian(ylim = c(0,7))+
+  # scale_x_discrete(expand = c(0,0))+
+  # scale_y_discrete(expand = c(0,0))+
+  theme_classic()+
+  theme(legend.position = "none",
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line.x = element_line(linewidth = line_width),
+        axis.line.y = element_blank(),
+        text = element_text()
+        )+
+  geom_hline(yintercept = c(length(unique(tmp_df$clinical))- 0.5), linewidth = line_width)
+  
+p_tab  
+
+tmp_error <- rbind(rep(NA,ncol(df)),df)
+tmp_error$Clinical_factors[1] <- tab_header[[1]] # "Clinical factors", tab_header[["Clinical_factors"]]
+
+tmp_error$Clinical_factors <- factor(tmp_error$Clinical_factors, levels = rev(tmp_error$Clinical_factors))
+
+#tmp_error <- tmp_error %>% mutate(path_x = 1, path_y = c(rep(0, nrow(.)-1),nrow(.)-0.5))
+
+p_errorbar <- ggplot(data = tmp_error)+
+  geom_point(aes(x = HR, y = Clinical_factors), # 设置点
+             shape = "diamond",
+             color = "blue",
+             size = 2
+  )+
+  geom_errorbarh(aes(xmin = HR_confint_lower_95, # 设置误差线
+                     xmax =HR_confint_upper_95,
+                     y = Clinical_factors),
+                 linewidth = line_width, # 线的宽度
+                 height = error_bar_height, # 两端误差线的宽度
+                 size = 1,
+  )+
+  # coord_cartesian(ylim = c(0, 8))+
+  # scale_x_discrete(expand = c(0,0))+
+  # scale_y_discrete(expand = c(0,0))+
+  theme_classic()+
+  theme(title = element_blank(),
+        #axis.line.x = element_line(linewidth = line_width), # 下坐标线
+        axis.text.x = element_text(face = "bold"),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+
+  )+
+  expand_limits(x=0)+
+  #geom_hline(yintercept = c(nrow(tmp_error)-0.5), linewidth = line_width)+ #上坐标线
+  # geom_path(aes(x=path_x, y = path_y))
+  # annotate("segment",x=1,xend = 1,y=0,yend = nrow(tmp_error)-0.5)
+  geom_vline(xintercept = 1, color = "grey50")
+  #geom_segment(aes(x =1, xend = 1, y = 0, yend = nrow(tmp_error)-0.5), inherit.aes = FALSE)
+  
+  # geom_segment(aes(x =1, xend = 1, y = 0, yend = nrow(tmp_error)-0.5),
+  #              color = "grey60",linewidth = line_width,size = 0.1)  # 无效线
+  
+ # p_errorbar <- p_errorbar + geom_rect(aes(xmin=0.5,xmax = 1.5,ymin = 6.5, ymax = 7.7),fill = "white")  
+
+library(aplot)
+# p_tab  %>% insert_right( p_errorbar, width = 1)
+
+p <- p_errorbar %>% insert_left( p_tab, width = 1)
+
+ggsave(filename = "forest.pdf", plot = p, width = 11, height = 5)
+
+
+####################
+
+
+
+
+
+
+
+
+
+
+
+

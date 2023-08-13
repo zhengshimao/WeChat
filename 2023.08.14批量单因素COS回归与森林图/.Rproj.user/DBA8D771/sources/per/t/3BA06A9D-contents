@@ -1,0 +1,132 @@
+library(tidyverse)
+library(BioUncle)
+library(magrittr)
+library(openxlsx)
+library(dplyr)
+library(RColorBrewer)
+library(ggh4x)
+rm(list = ls())
+# 准备分组文件
+
+up_element <- read.xlsx(xlsxFile = "plantcare22897.xlsx", sheet = 2) #%>% select(-motif,-organism)
+up_element1 <-  apply(up_element, 1, function(x){c(x["gene"],x["element"], start = min(c(x["start"],x["end"])),end =max(c(x["start"],x["end"])), x["descripton"]) }) %>% 
+  t() %>% as.data.frame() %>% na.omit()
+
+element_group <- read.xlsx(xlsxFile = "element_group.xlsx")
+
+up_element2 <- up_element1 %>% 
+  left_join(element_group, by = ("descripton" = "descripton")) %>% 
+  #select(-descripton) %>% # 这个描述还是需要的
+  filter(!is.na(group))
+## 查看与修改element
+### 查看
+up_element2$element %>% unique() %>% sort()
+### 修改 modification
+up_element2$element %<>% str_replace_all(pattern = "G-Box", replacement = "G-box") 
+up_element2$element %<>% str_replace_all(pattern = "_motif", replacement = "-motif") 
+
+any(is.na(up_element2)) #是否有无缺失值
+
+heat_up_element <- up_element2 %>% na.omit() %>% 
+  select(gene,element) %>% 
+  group_by(gene,element) %>% 
+  count(element) %>% ungroup() %>% 
+  # 变宽数据，并将缺失值替换为0
+  pivot_wider(names_from = "element", values_from = "n", values_fill = 0)
+
+element_number <- heat_up_element %>% column_to_rownames(var = "gene")%>% colSums()
+element_number_df <- data.frame(element = colnames(heat_up_element)[2:ncol(heat_up_element)],
+                                number = element_number
+                                ) %>% arrange(desc(element_number))
+
+gene_order <- data.frame(gene = heat_up_element$gene, n_element = apply(heat_up_element[,2:ncol(heat_up_element)], 1,sum)) %>% 
+  arrange(n_element) %>% select(gene) %>% pull()
+
+  # 再改回去宽数据
+heat_up_element <- heat_up_element %>% pivot_longer(cols = 2:ncol(.), names_to = "element", values_to = "n" )
+plot_df <- heat_up_element
+
+## 热图草图----
+ggplot(plot_df,aes(element, gene))+
+  geom_tile(aes(fill = as.character(n)),color = "grey90" )+
+  geom_text(aes(label = ifelse(n>0,n,"")), hjust = 0.5, vjust = 0.5,size = 3)+ #大于0的才添加标签
+  # scale_fill_brewer(breaks = sort(unique(plot_df$n)), palette = "Set3")
+  scale_fill_manual(breaks = sort(unique(plot_df$n)),
+                    labels = sort(unique(plot_df$n)),
+                    values = c("white",brewer.pal(length(sort(unique(plot_df$n)))-1,  "Set3"))
+  )+
+  scale_x_discrete(expand = c(0,0),position = "top")+ #标签放到上方
+  scale_y_discrete(expand = c(0,0), limits = gene_order, label = str_remove(gene_order, pattern = "CEY00_"))+
+  theme(text = element_text(family = "serif", face = "bold"),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 0),
+        axis.title = element_blank(),
+        legend.position = "none"
+  )
+
+## 热图----
+### 整理各元件的分组group
+element_group2 <- up_element2 %>% select(element, group) %>% unique()
+plot_df <- heat_up_element %>% left_join(element_group2, by = c("element" = "element"))
+### 画图
+heat <- ggplot(plot_df,aes(interaction(element,group), gene))+
+  geom_tile(aes(fill = as.character(n)),color = "grey90" )+
+  geom_text(aes(label = ifelse(n>0,n,"")), hjust = 0.5, vjust = 0.5,size = 3)+ #大于0的才添加标签
+  # scale_fill_brewer(breaks = sort(unique(plot_df$n)), palette = "Set3")
+  scale_fill_manual(breaks = sort(unique(plot_df$n)),
+                    labels = sort(unique(plot_df$n)),
+                    values = c("white",brewer.pal(length(sort(unique(plot_df$n)))-1,  "Set3"))
+  )+
+  scale_x_discrete(expand = c(0,0),position = "top")+ #标签放到上方
+  scale_y_discrete(expand = c(0,0), limits = gene_order, label = str_remove(gene_order, pattern = "CEY00_"))+
+  guides(x = "axis_nested")+
+  theme(text = element_text(family = "serif", face = "bold"),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 0),
+        axis.title = element_blank(),
+        legend.position = "none",
+        ggh4x.axis.nestline.x = element_line(linewidth = 1), # 注释线
+        ggh4x.axis.nesttext.x = element_text(colour = "black",angle = 90, hjust = 0,vjust = 0.1) #注释字的调整
+  )
+heat
+## 柱状图----
+
+gene_element <- up_element2 %>% select(gene,group) %>% group_by(gene) %>% count(group)
+
+plot_df2 <- gene_element
+
+bar <- ggplot(plot_df2,aes(x = n, y = gene, fill = group))+
+  geom_bar(stat = "identity",position="stack",width = 0.7)+
+  scale_x_continuous(guide = guide_axis(position = "top"), expand = c(0,0))+
+  scale_y_discrete(expand = c(0,0))+
+  scale_fill_brewer(palette = "Set3")+
+  theme_bw()+
+  theme(axis.title = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        legend.title = element_blank(),
+        legend.position = c(0.8,0.2),
+        text = element_text(family = "serif",face = "bold",size = 12)
+  )
+bar
+
+## 拼图----
+library(aplot)
+heat %>% insert_right(bar,width = 0.7) 
+
+ggsave("上游顺式作用元件.pdf", width = 15, height = 11)
+
+up_element3 <- up_element2 %>% select(element, descripton, group) %>% unique()
+element_number_df1 <- element_number_df %>% left_join(up_element3, by = "element") %>% 
+  group_by(group) %>% arrange(desc(number), .by_group = T)
+
+write.xlsx(element_number_df1, file = "不同功能分组下的元件计数与排序.xlsx")
+
+
+
+
+
+
+
+
